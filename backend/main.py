@@ -7,11 +7,12 @@ from typing import Optional
 import qrcode
 from io import BytesIO
 import base64
-from models import Vehicle
+from models import Vehicle, VehicleCreate, VehicleUpdate
 from database import get_db, init_db
 import os
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
+import uuid
 
 app = FastAPI(title="Estate Vehicle Gate Pass")
 
@@ -32,11 +33,12 @@ def on_startup():
     print("Database ready!")
 
 @app.post("/api/vehicles")
-def create_vehicle(vehicle: Vehicle, x_role: str | None = Header(default=None)):
+def create_vehicle(vehicle: VehicleCreate, x_role: str | None = Header(default=None)):
     # Gate admin-only action
     if x_role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     try:
+        new_id = vehicle.id or ("VEH-" + uuid.uuid4().hex[:8].upper())
         with get_db() as db:
             db.execute(
                 """
@@ -45,7 +47,7 @@ def create_vehicle(vehicle: Vehicle, x_role: str | None = Header(default=None)):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    vehicle.id,
+                    new_id,
                     vehicle.plate,
                     vehicle.make,
                     vehicle.model,
@@ -56,7 +58,7 @@ def create_vehicle(vehicle: Vehicle, x_role: str | None = Header(default=None)):
                     vehicle.expires_at,
                 ),
             )
-        return {"message": "Vehicle added successfully", "id": vehicle.id}
+        return {"message": "Vehicle added successfully", "id": new_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -145,7 +147,7 @@ def toggle_vehicle(vehicle_id: str, x_role: str | None = Header(default=None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/vehicles/{vehicle_id}")
-def update_vehicle(vehicle_id: str, vehicle: Vehicle, x_role: str | None = Header(default=None)):
+def update_vehicle(vehicle_id: str, vehicle: VehicleUpdate, x_role: str | None = Header(default=None)):
     if x_role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     try:
@@ -154,28 +156,26 @@ def update_vehicle(vehicle_id: str, vehicle: Vehicle, x_role: str | None = Heade
             db.execute("SELECT id FROM vehicles WHERE id = ?", (vehicle_id,))
             if not db.fetchone():
                 raise HTTPException(status_code=404, detail="Vehicle not found")
-            
-            # Update vehicle
-            db.execute(
-                """
-                UPDATE vehicles 
-                SET plate = ?, make = ?, model = ?, owner_name = ?, 
-                    owner_unit = ?, owner_phone = ?, status = ?, expires_at = ?
-                WHERE id = ?
-                """,
-                (
-                    vehicle.plate,
-                    vehicle.make,
-                    vehicle.model,
-                    vehicle.owner_name,
-                    vehicle.owner_unit,
-                    vehicle.owner_phone,
-                    vehicle.status,
-                    vehicle.expires_at,
-                    vehicle_id,
-                ),
-            )
-        return vehicle
+            # Build partial update dynamically
+            fields = []
+            params = []
+            data = vehicle.dict(exclude_unset=True)
+            for key in ["plate", "make", "model", "owner_name", "owner_unit", "owner_phone", "status", "expires_at"]:
+                if key in data:
+                    fields.append(f"{key} = ?")
+                    params.append(data[key])
+            if not fields:
+                # nothing to update; return current
+                db.execute("SELECT * FROM vehicles WHERE id = ?", (vehicle_id,))
+                row = db.fetchone()
+                return dict(row) if row else {}
+            params.append(vehicle_id)
+            sql = f"UPDATE vehicles SET {', '.join(fields)} WHERE id = ?"
+            db.execute(sql, tuple(params))
+            # return updated row
+            db.execute("SELECT * FROM vehicles WHERE id = ?", (vehicle_id,))
+            row = db.fetchone()
+            return dict(row) if row else {}
     except HTTPException:
         raise
     except Exception as e:
@@ -194,7 +194,7 @@ def delete_vehicle(vehicle_id: str, x_role: str | None = Header(default=None)):
             
             # Delete vehicle
             db.execute("DELETE FROM vehicles WHERE id = ?", (vehicle_id,))
-        return {"success": True}
+        return {"message": "Vehicle deleted"}
     except HTTPException:
         raise
     except Exception as e:

@@ -29,7 +29,7 @@ function Admin() {
       return qrData.qr as string;
     },
     onError: (err: any) => {
-      setMessage(err?.message || "Error – check terminal");
+      setError(err?.message || "Error – check terminal");
     },
   });
 
