@@ -7,21 +7,53 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+
     server: {
       host: '0.0.0.0',
       port: 3001,
-      proxy: mode === 'development' ? {
+      strictPort: true,
+
+      // THIS FIXES THE "Blocked request" ERROR
+      allowedHosts: [
+        'app.squard24.com',
+        'api.squard24.com',
+        '.squard24.com',      // covers all subdomains
+        'localhost',
+        '127.0.0.1',
+      ],
+
+      // THIS CONNECTS FRONTEND → BACKEND THROUGH CLOUDFLARE
+      proxy: {
         '/api': {
-          target: env.VITE_API_BASE_URL || 'http://127.0.0.1:5000',
+          target: 'https://api.squard24.com',   // Your real public backend
           changeOrigin: true,
+          secure: true,                         // Required for HTTPS targets
+          rewrite: (path) => path.replace(/^\/api/, '/api'), // keeps /api prefix
         },
-      } : undefined,
+      },
     },
+
+    // Same settings for "npm run preview" (production-like server)
+    preview: {
+      host: '0.0.0.0',
+      port: 3001,
+      allowedHosts: [
+        'app.squard24.com',
+        'api.squard24.com',
+        '.squard24.com',
+        'localhost',
+        '127.0.0.1',
+      ],
+    },
+
     resolve: {
       alias: {
         '@': path.resolve(process.cwd(), 'src'),
       },
     },
-    build: { outDir: 'dist' },
+
+    build: {
+      outDir: 'dist',
+    },
   }
 })
